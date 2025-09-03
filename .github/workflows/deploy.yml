@@ -37,9 +37,8 @@ jobs:
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
           git add -A
-          git commit -m "Updated Benchmark pages"
-          git push
-          
+          (git commit -m "Updated Benchmark pages" && git push) || echo "No changes to commit"
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
