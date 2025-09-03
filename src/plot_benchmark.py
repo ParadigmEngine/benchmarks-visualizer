@@ -95,7 +95,8 @@ class BenchmarkHistoryTracker:
         """Retrieve the last plotted ID from the ci_cache"""
         cursor = self.conn.cursor()
         cursor.execute("SELECT last_plot_id FROM ci_cache")
-        id = cursor.fetchone()[0] or -1
+        temp = cursor.fetchone()
+        id = temp[0] if temp else -1
         return id
 
     def get_all_runs_since_last_plot(self):
@@ -608,6 +609,9 @@ class BenchmarkHistoryTracker:
         print(
             f"Creating paginated dashboard for {sum(len(v) for v in categories.values())} benchmarks in {len(categories)} categories..."
         )
+
+        # guarantee the dir exist
+        os.makedirs(os.path.dirname(output_file), exist_ok=True)
 
         # Calculate summary statistics
         total_benchmarks = sum(len(benchmarks) for benchmarks in categories.values())

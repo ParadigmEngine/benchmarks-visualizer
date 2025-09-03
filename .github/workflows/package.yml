@@ -53,7 +53,7 @@ jobs:
           pip3 install pandas plotly
 
       - name: Add Benchmark to Database
-        run: python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json ${{ github.event.inputs.branch }} ${{ github.event.inputs.commit }}
+        run: python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json ${{ github.event.inputs.commit }} ${{ github.event.inputs.branch }}
 
       - name: Commit Changes
         run: |
