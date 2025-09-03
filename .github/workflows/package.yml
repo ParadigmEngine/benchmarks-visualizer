@@ -1,0 +1,59 @@
+name: Package
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Commit SHA associated with the data
+        required: true
+        type: string
+      branch:
+        description: Branch name associated with the data
+        required: true
+        type: string
+      artifact_id:
+        description: ID of the artifact
+        required: true
+        type: string
+      repository:
+        description: Name of the repository
+        required: true
+        type: string
+      run_id:
+        description: ID of the run
+        required: true
+        type: string
+
+# multiple jobs cannot run concurrently due to the reliance on the checkout + generating the output
+concurrency:
+  group: global-lock
+  cancel-in-progress: false
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+            github-token: ${{ secrets.PARADIGM_ENGINE_PAT }}   # actions:read on the source repo
+            repository:   ${{ github.event.inputs.repository }}
+            run-id:       ${{ github.event.inputs.run_id }}
+            artifact-ids: ${{ github.event.inputs.artifact_id }}
+            path:         ./temp/
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Download and Prepare Data
+        run: |
+          mkdir -p ./data/${{ github.event.inputs.branch }}
+          mv ./temp/results.json ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
+          rm -rf ./temp/
+
+      - name: Run Benchmark Plotting
+        run: |
+          python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json ${{ github.event.inputs.branch }} ${{ github.event.inputs.commit }}
+          python3 ./src/plot_benchmark.py --plot ./out/${{ github.event.inputs.branch }}/index.html
+
+      - name: Commit Changes
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          git diff --exit-code --quiet || (git add -A && git commit -m "Added ${{ github.event.inputs.branch }} - ${{ github.event.inputs.commit }} to the data" && git push)
