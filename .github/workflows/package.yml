@@ -32,6 +32,8 @@ jobs:
   package:
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout
+        uses: actions/checkout@v3
       - uses: actions/download-artifact@v5
         with:
             github-token: ${{ secrets.PARADIGM_ENGINE_PAT }}   # actions:read on the source repo
@@ -39,24 +41,27 @@ jobs:
             run-id:       ${{ github.event.inputs.run_id }}
             artifact-ids: ${{ github.event.inputs.artifact_id }}
             path:         ./temp/
-      - name: Checkout
-        uses: actions/checkout@v3
       - name: Download and Prepare Data
         run: |
           mkdir -p ./data/${{ github.event.inputs.branch }}
+          ls ./temp/
+          ls ./
           mv ./temp/results.json ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
           rm -rf ./temp/
 
       - name: Setup Python Deps
         run: |
           python3 -m pip install --upgrade pip
-          pip3 install pandas plotly sqlite3
+          pip3 install pandas plotly
 
-      - name: Run Benchmark Plotting
+      - name: Add Benchmark to Database
         run: python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json ${{ github.event.inputs.branch }} ${{ github.event.inputs.commit }}
 
       - name: Commit Changes
         run: |
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
-          git diff --exit-code --quiet || (git add -A && git commit -m "Added ${{ github.event.inputs.branch }} - ${{ github.event.inputs.commit }} to the data" && git push)
+          git add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
+          git add ./data/database.db
+          git commit -m "Added ${{ github.event.inputs.branch }} - ${{ github.event.inputs.commit }} to the data"
+          git push

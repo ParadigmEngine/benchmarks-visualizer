@@ -1,0 +1,18 @@
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+
+      - name: Setup Python Deps
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install pandas plotly
+
+      - name: Deploy
+        run: |
+          python3 ./src/plot_benchmark.py --plot-ci
