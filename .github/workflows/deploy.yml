@@ -16,3 +16,11 @@ jobs:
       - name: Deploy
         run: |
           python3 ./src/plot_benchmark.py --plot-ci
+
+      - name: Commit Changes
+        run: |
+          git config --global user.email "action@github.com"
+          git config --global user.name "GitHub Action"
+          git add -A
+          git commit -m "Updated Benchmark pages"
+          git push

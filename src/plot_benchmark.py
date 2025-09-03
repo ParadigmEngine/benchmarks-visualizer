@@ -72,11 +72,11 @@ class BenchmarkHistoryTracker:
             """
             CREATE TABLE IF NOT EXISTS ci_cache (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                last_plot_id INTEGER,
-                FOREIGN KEY (last_plot_id) REFERENCES benchmark_runs(id)
+                last_plot_id INTEGER
             )
             """
         )
+
         self.conn.commit()
 
     def set_last_plot(self):
@@ -85,10 +85,15 @@ class BenchmarkHistoryTracker:
         cursor.execute("SELECT MAX(id) FROM benchmark_runs")
         last_run_id = cursor.fetchone()[0]
         if last_run_id:
-            cursor.execute(
-                "UPDATE ci_cache SET last_plot_id = ?",
-                (last_run_id,),
-            )
+            if self.get_last_plot() == -1:
+                cursor.execute(
+                    "INSERT INTO ci_cache (last_plot_id) VALUES (?)", (last_run_id,)
+                )
+            else:
+                cursor.execute(
+                    "UPDATE ci_cache SET last_plot_id = ?",
+                    (last_run_id,),
+                )
         self.conn.commit()
 
     def get_last_plot(self):
@@ -644,18 +649,26 @@ class BenchmarkHistoryTracker:
             </script>
         """
 
+        file_ext = os.path.splitext(output_file)[1]
+        category_file_base_name = (
+            os.path.splitext(os.path.basename(output_file))[0] + "_"
+        )
+        category_file_base = os.path.join(
+            os.path.dirname(output_file), category_file_base_name
+        )
+
         def make_tabs_container_html(active_index=None):
             html = f"""
                 <div class="tabs-container">
                     <div class="tabs">
-                        <button class="tab overview-tab{ ' active' if active_index is None else '' }" onclick="location.href='{output_file}'">
+                        <button class="tab overview-tab{ ' active' if active_index is None else '' }" onclick="location.href='{os.path.basename(output_file)}'">
                             Overview
                             <span class="tab-badge">{total_benchmarks}</span>
                         </button>
             """
             for i, (category, benchmarks) in enumerate(categories.items()):
                 html += f"""
-                        <button class="tab { ' active' if active_index == i else '' }" onclick="location.href='{output_file.split('.')[0]}_{category}.html'">
+                        <button class="tab { ' active' if active_index == i else '' }" onclick="location.href='{category_file_base_name}{category}{file_ext}'">
                             {category}
                             <span class="tab-badge">{len(benchmarks)}</span>
                         </button>
@@ -750,7 +763,7 @@ class BenchmarkHistoryTracker:
         for i, (category, benchmarks) in enumerate(categories.items()):
             stats = category_stats[category]
             html_string += f"""
-                                <tr style="border-bottom: 1px solid #f0f0f0; cursor: pointer;" onclick="location.href='{output_file.split('.')[0]}_{category}.html'">
+                                <tr style="border-bottom: 1px solid #f0f0f0; cursor: pointer;" onclick="location.href='{category_file_base_name}{category}{file_ext}'">
                                     <td style="padding: 0.5rem; font-weight: 500;">{category}</td>
                                     <td style="text-align: center; padding: 0.5rem;">{len(benchmarks)}</td>
                                     <td style="text-align: center; padding: 0.5rem; color: #dc3545;">{stats['regression']}</td>
@@ -871,7 +884,7 @@ class BenchmarkHistoryTracker:
         </html>
         """
             with open(
-                f"{output_file.split('.')[0]}_{category}.html", "w", encoding="utf-8"
+                f"{category_file_base}{category}{file_ext}", "w", encoding="utf-8"
             ) as f:
                 f.write(cat_html_string)
 
