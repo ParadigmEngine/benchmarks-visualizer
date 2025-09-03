@@ -47,10 +47,13 @@ jobs:
           mv ./temp/results.json ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
           rm -rf ./temp/
 
-      - name: Run Benchmark Plotting
+      - name: Setup Python Deps
         run: |
-          python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json ${{ github.event.inputs.branch }} ${{ github.event.inputs.commit }}
-          python3 ./src/plot_benchmark.py --plot ./out/${{ github.event.inputs.branch }}/index.html
+          python3 -m pip install --upgrade pip
+          pip3 install pandas plotly sqlite3
+
+      - name: Run Benchmark Plotting
+        run: python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json ${{ github.event.inputs.branch }} ${{ github.event.inputs.commit }}
 
       - name: Commit Changes
         run: |
