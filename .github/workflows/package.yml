@@ -73,3 +73,14 @@ jobs:
           git add ./data/database.db
           git commit -m "Added ${{ github.event.inputs.branch }} - ${{ github.event.inputs.commit }} to the data"
           git push
+            - uses: actions/github-script@v7
+      - uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "deploy.yml",
+              ref: context.ref
+            })
