@@ -22,6 +22,16 @@ on:
         description: ID of the run
         required: true
         type: string
+      platform:
+        description: Platform of the run
+        required: false
+        type: string
+        default: windows
+      architecture:
+        description: Architecture of the run
+        required: false
+        type: string
+        default: x86_64
 
 # multiple jobs cannot run concurrently due to the reliance on the checkout + generating the output
 concurrency:
@@ -53,13 +63,13 @@ jobs:
           pip3 install pandas plotly
 
       - name: Add Benchmark to Database
-        run: python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json ${{ github.event.inputs.commit }} ${{ github.event.inputs.branch }}
+        run: python3 ./src/plot_benchmark.py --add ./data/${{ github.event.inputs.platform }}/${{ github.event.inputs.architecture }}/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json "${{ github.event.inputs.commit }}" "${{ github.event.inputs.branch }}" "${{ github.event.inputs.platform }}" "${{ github.event.inputs.architecture }}"
 
       - name: Commit Changes
         run: |
           git config --global user.email "action@github.com"
           git config --global user.name "GitHub Action"
-          git add ./data/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
+          git add ./data/${{ github.event.inputs.platform }}/${{ github.event.inputs.architecture }}/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
           git add ./data/database.db
           git commit -m "Added ${{ github.event.inputs.branch }} - ${{ github.event.inputs.commit }} to the data"
           git push

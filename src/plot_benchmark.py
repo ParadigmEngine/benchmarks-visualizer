@@ -48,7 +48,9 @@ class BenchmarkHistoryTracker:
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
                 commit_hash TEXT,
-                branch TEXT
+                branch TEXT,
+                platform TEXT,
+                architecture TEXT
             )
         """
         )
@@ -68,100 +70,66 @@ class BenchmarkHistoryTracker:
         """
         )
 
-        self.conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS ci_cache (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                last_plot_id INTEGER
-            )
-            """
-        )
-
         self.conn.commit()
 
-    def set_last_plot(self):
-        """Set the last ID that was plotted by the ci"""
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT MAX(id) FROM benchmark_runs")
-        last_run_id = cursor.fetchone()[0]
-        if last_run_id:
-            if self.get_last_plot() == -1:
-                cursor.execute(
-                    "INSERT INTO ci_cache (last_plot_id) VALUES (?)", (last_run_id,)
-                )
-            else:
-                cursor.execute(
-                    "UPDATE ci_cache SET last_plot_id = ?",
-                    (last_run_id,),
-                )
-        self.conn.commit()
-
-    def get_last_plot(self):
-        """Retrieve the last plotted ID from the ci_cache"""
-        cursor = self.conn.cursor()
-        cursor.execute("SELECT last_plot_id FROM ci_cache")
-        temp = cursor.fetchone()
-        id = temp[0] if temp else -1
-        return id
-
-    def get_all_runs_since_last_plot(self):
-        """Retrieve all benchmark runs since the last plotted ID"""
-        last_plot_id = self.get_last_plot()
-        cursor = self.conn.cursor()
-        if last_plot_id:
-            cursor.execute(
-                "SELECT * FROM benchmark_runs WHERE id > ?",
-                (last_plot_id,),
-            )
-        return cursor.fetchall()
-
-    def get_all_branches_since_last_plot(self):
-        """Retrieve all unique branch names from benchmark_runs since the last plotted ID"""
-        last_plot_id = self.get_last_plot()
-        cursor = self.conn.cursor()
-        if last_plot_id:
-            cursor.execute(
-                "SELECT DISTINCT branch FROM benchmark_runs WHERE id > ?",
-                (last_plot_id,),
-            )
-        return [row[0] for row in cursor.fetchall()]
-
-    def get_all_branches(self):
+    def get_all_branches(self, platform=None, architecture=None):
         """Retrieve all unique branch names from the database"""
         cursor = self.conn.cursor()
-        cursor.execute("SELECT DISTINCT branch FROM benchmark_runs")
+        query = "SELECT DISTINCT branch FROM benchmark_runs WHERE 1=1"
+        params = []
+        if platform:
+            query += " AND platform = ?"
+            params.append(platform)
+        if architecture:
+            query += " AND architecture = ?"
+            params.append(architecture)
+        cursor.execute(query, params)
         return [row[0] for row in cursor.fetchall()]
 
-    def get_database_entries(self, branch=None):
+    def get_all_branch_combinations(self):
+        """Retrieve all unique (branch, platform, architecture) combinations from the database"""
+        cursor = self.conn.cursor()
+        query = "SELECT DISTINCT branch, platform, architecture FROM benchmark_runs"
+        cursor.execute(query)
+        return [row for row in cursor.fetchall()]
+
+    def get_database_entries(self, branch=None, platform=None, architecture=None):
         """Retrieve all commit_hash and branch entries from the database"""
         cursor = self.conn.cursor()
+        query = "SELECT commit_hash, branch FROM benchmark_runs WHERE 1=1"
+        params = []
         if branch:
-            cursor.execute(
-                "SELECT commit_hash, branch FROM benchmark_runs WHERE branch = ?",
-                (branch,),
-            )
-        else:
-            cursor.execute("SELECT commit_hash, branch FROM benchmark_runs")
+            query += " AND branch = ?"
+            params.append(branch)
+        if platform:
+            query += " AND platform = ?"
+            params.append(platform)
+        if architecture:
+            query += " AND architecture = ?"
+            params.append(architecture)
+        cursor.execute(query, params)
         return cursor.fetchall()
 
-    def remove_benchmark_run(self, commit_hash=None, branch="main"):
+    def remove_benchmark_run(
+        self, commit_hash=None, branch="main", platform=None, architecture=None
+    ):
         """Remove a benchmark run from the history and the benchmark_results that reference this run"""
         cursor = self.conn.cursor()
         run_ids = []
+        query = "SELECT DISTINCT id FROM benchmark_runs WHERE branch = ?"
+        params = [branch]
+        if platform:
+            query += " AND platform = ?"
+            params.append(platform)
+        if architecture:
+            query += " AND architecture = ?"
+            params.append(architecture)
         if commit_hash:
-            cursor.execute(
-                "SELECT DISTINCT id FROM benchmark_runs WHERE commit_hash = ? AND branch = ?",
-                (commit_hash, branch),
-            )
-            run_ids = [row[0] for row in cursor.fetchall()]
+            query += " AND commit_hash = ?"
+            params.append(commit_hash)
+        cursor.execute(query, params)
+        run_ids = [row[0] for row in cursor.fetchall()]
 
-        else:
-            # select the run_id from benchmark_runs
-            cursor.execute(
-                "SELECT DISTINCT id FROM benchmark_runs WHERE branch = ?",
-                branch,
-            )
-            run_ids = [row[0] for row in cursor.fetchall()]
         if run_ids:
             cursor.executemany(
                 "DELETE FROM benchmark_results WHERE run_id = ?",
@@ -175,7 +143,14 @@ class BenchmarkHistoryTracker:
             cursor.execute("VACUUM")
         self.conn.commit()
 
-    def add_benchmark_run(self, json_file, commit_hash=None, branch="main"):
+    def add_benchmark_run(
+        self,
+        json_file,
+        commit_hash=None,
+        branch="main",
+        platform=None,
+        architecture=None,
+    ):
         """Add a new benchmark run to the history"""
         with open(json_file) as f:
             data = json.load(f)
@@ -186,13 +161,12 @@ class BenchmarkHistoryTracker:
 
         # Create run entry with explicit timestamp
         cursor = self.conn.cursor()
-
         cursor.execute(
             """
-            INSERT INTO benchmark_runs (timestamp, commit_hash, branch)
-            VALUES (?, ?, ?)
-        """,
-            (timestamp, commit_hash, branch),
+            INSERT INTO benchmark_runs (timestamp, commit_hash, branch, platform, architecture)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (timestamp, commit_hash, branch, platform, architecture),
         )
 
         run_id = cursor.lastrowid
@@ -221,7 +195,7 @@ class BenchmarkHistoryTracker:
         )
         return run_id
 
-    def get_benchmark_history(self, benchmark_name):
+    def get_benchmark_history(self, benchmark_name, platform=None, architecture=None):
         """Get historical data for a specific benchmark"""
         query = """
             SELECT 
@@ -233,10 +207,19 @@ class BenchmarkHistoryTracker:
             FROM benchmark_results res
             JOIN benchmark_runs br ON res.run_id = br.id
             WHERE res.benchmark_name = ?
-            ORDER BY br.timestamp ASC
         """
+        params = [benchmark_name]
 
-        df = pd.read_sql_query(query, self.conn, params=[benchmark_name])
+        if platform:
+            query += " AND br.platform = ?"
+            params.append(platform)
+        if architecture:
+            query += " AND br.architecture = ?"
+            params.append(architecture)
+
+        query += " ORDER BY br.timestamp ASC"
+
+        df = pd.read_sql_query(query, self.conn, params=params)
 
         if not df.empty:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
@@ -245,33 +228,41 @@ class BenchmarkHistoryTracker:
 
         return df
 
-    def get_all_benchmark_names(self, branch=None):
+    def get_all_benchmark_names(self, branch=None, platform=None, architecture=None):
         """Retrieve all unique benchmark names from the database"""
         cursor = self.conn.cursor()
-        if branch:
-            cursor.execute(
-                """
-                SELECT DISTINCT res.benchmark_name 
-                FROM benchmark_results res
-                JOIN benchmark_runs br ON res.run_id = br.id
-                WHERE br.branch = ?
-                ORDER BY res.benchmark_name
-                """,
-                (branch,),
-            )
-        else:
-            cursor.execute(
-                "SELECT DISTINCT benchmark_name FROM benchmark_results ORDER BY benchmark_name"
-            )
+        query = "SELECT DISTINCT benchmark_name FROM benchmark_results WHERE 1=1"
+        params = []
+        if platform or architecture or branch:
+            query += " AND run_id IN (SELECT id FROM benchmark_runs WHERE 1=1"
+            if platform:
+                query += " AND platform = ?"
+                params.append(platform)
+            if architecture:
+                query += " AND architecture = ?"
+                params.append(architecture)
+            if branch:
+                query += " AND branch = ?"
+                params.append(branch)
+            query += ")"
+        query += " ORDER BY benchmark_name"
+        cursor.execute(query, params)
         return [row[0] for row in cursor.fetchall()]
 
     def get_benchmark_names_by_pattern(
-        self, pattern=None, exclude_pattern=None, branch=None
+        self,
+        pattern=None,
+        exclude_pattern=None,
+        branch=None,
+        platform=None,
+        architecture=None,
     ):
         """Get benchmark names matching a pattern"""
         import re
 
-        all_names = self.get_all_benchmark_names(branch=branch)
+        all_names = self.get_all_benchmark_names(
+            branch=branch, platform=platform, architecture=architecture
+        )
 
         if pattern:
             regex = re.compile(pattern)
@@ -298,9 +289,13 @@ class BenchmarkHistoryTracker:
         # Clean up any trailing/leading whitespace
         return category.strip()
 
-    def group_benchmarks_by_category(self, branch=None):
+    def group_benchmarks_by_category(
+        self, branch=None, platform=None, architecture=None
+    ):
         """Group all benchmarks by their category"""
-        benchmark_names = self.get_all_benchmark_names(branch=branch)
+        benchmark_names = self.get_all_benchmark_names(
+            branch=branch, platform=platform, architecture=architecture
+        )
         categories = defaultdict(list)
 
         for bench_name in benchmark_names:
@@ -320,10 +315,14 @@ class BenchmarkHistoryTracker:
         metric="cpu_time",
         threshold_range={"min": 10, "min_time": 100, "max": 100, "max_time": 1000},
         branch=None,
+        platform=None,
+        architecture=None,
     ):
         """Create evolution plot for specified benchmarks"""
         if benchmark_names is None:
-            benchmark_names = self.get_all_benchmark_names(branch=branch)
+            benchmark_names = self.get_all_benchmark_names(
+                branch=branch, platform=platform, architecture=architecture
+            )
 
         if isinstance(benchmark_names, str):
             benchmark_names = [benchmark_names]
@@ -422,9 +421,13 @@ class BenchmarkHistoryTracker:
         threshold_range={"min": 10, "min_time": 100, "max": 100, "max_time": 1000},
         metric="cpu_time",
         figure=None,
+        platform=None,
+        architecture=None,
     ):
         """Plot with regression detection highlighting"""
-        df = self.get_benchmark_history(benchmark_name)
+        df = self.get_benchmark_history(
+            benchmark_name, platform=platform, architecture=architecture
+        )
 
         if df.empty:
             return go.Figure().add_annotation(text="No data available", showarrow=False)
@@ -535,10 +538,17 @@ class BenchmarkHistoryTracker:
         return fig
 
     def plot_all_benchmarks_evolution(
-        self, metric="cpu_time", separate_plots=False, branch=None
+        self,
+        metric="cpu_time",
+        separate_plots=False,
+        branch=None,
+        platform=None,
+        architecture=None,
     ):
         """Plot evolution for all benchmarks automatically"""
-        benchmark_names = self.get_all_benchmark_names(branch=branch)
+        benchmark_names = self.get_all_benchmark_names(
+            branch=branch, platform=platform, architecture=architecture
+        )
 
         if not benchmark_names:
             print("No benchmarks found in database")
@@ -547,24 +557,34 @@ class BenchmarkHistoryTracker:
         if separate_plots:
             figures = {}
             for bench_name in benchmark_names:
-                fig = self.plot_benchmark_evolution([bench_name], metric)
+                fig = self.plot_benchmark_evolution(
+                    [bench_name], metric, platform=platform, architecture=architecture
+                )
                 figures[bench_name] = fig
             return figures
         else:
-            return self.plot_benchmark_evolution(benchmark_names, metric)
+            return self.plot_benchmark_evolution(
+                benchmark_names, metric, platform=platform, architecture=architecture
+            )
 
     def detect_all_regressions(
         self,
         threshold_range={"min": 10, "min_time": 100, "max": 100, "max_time": 1000},
         metric="cpu_time",
         branch=None,
+        platform=None,
+        architecture=None,
     ):
         """Run regression detection on all benchmarks"""
-        benchmark_names = self.get_all_benchmark_names(branch=branch)
+        benchmark_names = self.get_all_benchmark_names(
+            branch=branch, platform=platform, architecture=architecture
+        )
         regression_results = {}
 
         for bench_name in benchmark_names:
-            df = self.get_benchmark_history(bench_name)
+            df = self.get_benchmark_history(
+                bench_name, platform=platform, architecture=architecture
+            )
             if len(df) > 1:
                 df["pct_change"] = df[metric].pct_change() * 100
 
@@ -578,7 +598,11 @@ class BenchmarkHistoryTracker:
                         "max_regression": regressions["pct_change"].max(),
                         "dates": regressions["timestamp"].tolist(),
                         "fig": self.plot_regression_detection(
-                            bench_name, threshold_range
+                            bench_name,
+                            threshold_range,
+                            metric,
+                            platform=platform,
+                            architecture=architecture,
                         ),
                     }
 
@@ -590,10 +614,17 @@ class BenchmarkHistoryTracker:
         metric="cpu_time",
         threshold_range={"min": 10, "min_time": 100, "max": 100, "max_time": 1000},
         branch=None,
+        platform=None,
+        architecture=None,
     ):
         """Create dashboard with pagination by benchmark category"""
         return self.create_paginated_dashboard(
-            output_file, metric=metric, threshold_range=threshold_range, branch=branch
+            output_file,
+            metric=metric,
+            threshold_range=threshold_range,
+            branch=branch,
+            platform=platform,
+            architecture=architecture,
         )
 
     def create_paginated_dashboard(
@@ -602,10 +633,14 @@ class BenchmarkHistoryTracker:
         metric="cpu_time",
         threshold_range={"min": 10, "min_time": 100, "max": 100, "max_time": 1000},
         branch=None,
+        platform=None,
+        architecture=None,
     ):
         """Create a paginated dashboard organized by benchmark categories"""
 
-        categories = self.group_benchmarks_by_category(branch=branch)
+        categories = self.group_benchmarks_by_category(
+            branch=branch, platform=platform, architecture=architecture
+        )
 
         if not categories:
             print("No benchmarks found in database")
@@ -695,7 +730,9 @@ class BenchmarkHistoryTracker:
             category_stats[category] = {"regression": 0, "improvement": 0, "neutral": 0}
 
             for bench_name in benchmarks:
-                df = self.get_benchmark_history(bench_name)
+                df = self.get_benchmark_history(
+                    bench_name, platform=platform, architecture=architecture
+                )
                 if not df.empty:
                     latest = df.iloc[-1][metric]
                     avg = df[metric].mean()
@@ -809,7 +846,9 @@ class BenchmarkHistoryTracker:
 
             # Add benchmark sections for this category
             for bench_name in benchmarks:
-                df = self.get_benchmark_history(bench_name)
+                df = self.get_benchmark_history(
+                    bench_name, platform=platform, architecture=architecture
+                )
 
                 if not df.empty:
                     # Calculate statistics
@@ -835,7 +874,9 @@ class BenchmarkHistoryTracker:
                         status_type = "neutral"
 
                     # Create plots
-                    fig_evolution = self.plot_benchmark_evolution([bench_name])
+                    fig_evolution = self.plot_benchmark_evolution(
+                        [bench_name], platform=platform, architecture=architecture
+                    )
                     # fig_regression = self.plot_regression_detection(bench_name)
 
                     # Optimize plot layouts
@@ -916,10 +957,17 @@ class BenchmarkHistoryTracker:
         metric="cpu_time",
         threshold_range={"min": 10, "min_time": 100, "max": 100, "max_time": 1000},
         branch=None,
+        platform=None,
+        architecture=None,
     ):
         """Fallback to original scrollable dashboard if pagination is not desired"""
         return self.create_paginated_dashboard(
-            output_file, metric, threshold_range=threshold_range, branch=branch
+            output_file,
+            metric,
+            threshold_range=threshold_range,
+            branch=branch,
+            platform=platform,
+            architecture=architecture,
         )
 
 
@@ -942,9 +990,9 @@ if __name__ == "__main__":
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
         "--add",
-        nargs=3,
-        metavar=("FILE", "COMMIT_HASH", "BRANCH"),
-        help="Add a new benchmark run: FILE COMMIT_HASH BRANCH",
+        nargs=5,
+        metavar=("FILE", "COMMIT_HASH", "BRANCH", "PLATFORM", "ARCHITECTURE"),
+        help="Add a new benchmark run: FILE COMMIT_HASH BRANCH PLATFORM ARCHITECTURE",
     )
     group.add_argument(
         "--add-dir",
@@ -954,24 +1002,24 @@ if __name__ == "__main__":
     )
     group.add_argument(
         "--remove",
-        nargs=2,
-        metavar=("COMMIT_HASH", "BRANCH"),
-        help="Remove a benchmark run: COMMIT_HASH BRANCH",
+        nargs=4,
+        metavar=("COMMIT_HASH", "BRANCH", "PLATFORM", "ARCHITECTURE"),
+        help="Remove a benchmark run: COMMIT_HASH BRANCH PLATFORM ARCHITECTURE",
     )
     group.add_argument(
         "--remove-branch",
-        nargs=1,
-        metavar=("BRANCH"),
-        help="Remove a benchmark run: BRANCH",
+        nargs=3,
+        metavar=("BRANCH", "PLATFORM", "ARCHITECTURE"),
+        help="Remove a benchmark run: BRANCH PLATFORM ARCHITECTURE",
     )
     group.add_argument(
         "--list", nargs="?", const=None, help="List all database entries"
     )
     group.add_argument(
         "--plot",
-        metavar=("OUTPUT_FILE", "BRANCH"),
+        metavar=("OUTPUT_FILE", "BRANCH", "PLATFORM", "ARCHITECTURE"),
         nargs="?",
-        const=(os.path.join(OUTPUT_DIR, "dashboard.html"), None),
+        const=(os.path.join(OUTPUT_DIR, "dashboard.html"), None, None, None),
         help="Plot benchmark results and save to OUTPUT_FILE (default: dashboard.html)",
     )
     group.add_argument(
@@ -996,7 +1044,13 @@ if __name__ == "__main__":
                 )
 
     if args.add:
-        tracker.add_benchmark_run(*args.add)
+        tracker.add_benchmark_run(
+            json_file=args.add[0],
+            commit_hash=args.add[1],
+            branch=args.add[2],
+            platform=args.add[3],
+            architecture=args.add[4],
+        )
 
     if args.remove:
         tracker.remove_benchmark_run(*args.remove)
@@ -1008,22 +1062,45 @@ if __name__ == "__main__":
         print("Listing database entries:")
         print(tracker.get_database_entries(branch=args.list))
 
-    def plot_branch(output_file, branch):
+    def plot_branch(output_file, branch, platform, architecture):
         tracker.plot_all_benchmarks_evolution(
-            metric="cpu_time", separate_plots=True, branch=branch
+            metric="cpu_time",
+            separate_plots=True,
+            branch=branch,
+            platform=platform,
+            architecture=architecture,
         )
-        tracker.detect_all_regressions(metric="cpu_time", branch=branch)
+        tracker.detect_all_regressions(
+            metric="cpu_time",
+            branch=branch,
+            platform=platform,
+            architecture=architecture,
+        )
         tracker.create_combined_dashboard(
-            output_file=output_file, branch=branch, metric="cpu_time"
+            output_file=output_file,
+            branch=branch,
+            metric="cpu_time",
+            platform=platform,
+            architecture=architecture,
         )
 
     if args.plot_ci:
-        all_branches = tracker.get_all_branches_since_last_plot()
-        for branch in all_branches:
-            output_file = os.path.join(OUTPUT_DIR, branch, "index.html")
-            plot_branch(output_file=output_file, branch=branch)
-
-        tracker.set_last_plot()
+        all_branches = tracker.get_all_branch_combinations()
+        for [branch, platform, architecture] in all_branches:
+            output_file = os.path.join(
+                OUTPUT_DIR, platform, architecture, branch, "index.html"
+            )
+            plot_branch(
+                output_file=output_file,
+                branch=branch,
+                platform=platform,
+                architecture=architecture,
+            )
 
     if args.plot:
-        plot_branch(output_file=args.plot[0], branch=args.plot[1])
+        plot_branch(
+            output_file=args.plot[0],
+            branch=args.plot[1],
+            platform=args.plot[2],
+            architecture=args.plot[3],
+        )

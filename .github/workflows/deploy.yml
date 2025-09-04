@@ -31,6 +31,7 @@ jobs:
       - name: Deploy
         run: |
           python3 ./src/plot_benchmark.py --plot-ci
+          python3 ./src/make_index.py
 
       - name: Commit Changes
         run: |
