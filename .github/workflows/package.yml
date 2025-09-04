@@ -53,7 +53,7 @@ jobs:
             path:         ./temp/
       - name: Download and Prepare Data
         run: |
-          mkdir -p ./data/${{ github.event.inputs.branch }}
+          mkdir -p ./data/${{ github.event.inputs.platform }}/${{ github.event.inputs.architecture }}/${{ github.event.inputs.branch }}
           mv ./temp/results.json ./data/${{ github.event.inputs.platform }}/${{ github.event.inputs.architecture }}/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
           rm -rf ./temp/
 
