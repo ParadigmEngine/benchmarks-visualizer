@@ -1287,19 +1287,6 @@ if __name__ == "__main__":
         print(tracker.get_database_entries(branch=args.list))
 
     def plot_branch(local_tracker, output_file, branch, platform, architecture):
-        local_tracker.plot_all_benchmarks_evolution(
-            metric="cpu_time",
-            separate_plots=True,
-            branch=branch,
-            platform=platform,
-            architecture=architecture,
-        )
-        local_tracker.detect_all_regressions(
-            metric="cpu_time",
-            branch=branch,
-            platform=platform,
-            architecture=architecture,
-        )
         local_tracker.create_combined_dashboard(
             output_file=output_file,
             branch=branch,
