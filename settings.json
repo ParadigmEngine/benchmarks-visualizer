@@ -1,5 +1,6 @@
 {
     "data": "./data/",
     "database": "./data/database.db",
-    "output": "./out/"
+    "output": "./out/",
+    "main-branch": "develop"
 }

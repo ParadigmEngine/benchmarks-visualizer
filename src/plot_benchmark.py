@@ -11,6 +11,7 @@ from collections import defaultdict
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, os.pardir))
+MAIN_BRANCH = "develop"
 
 
 def calculate_threshold_value(
@@ -161,6 +162,20 @@ class BenchmarkHistoryTracker:
 
         # Create run entry with explicit timestamp
         cursor = self.conn.cursor()
+        # make sure there is no existing entry with the same commit_hash, branch, platform, architecture
+        cursor.execute(
+            """
+            SELECT id FROM benchmark_runs 
+            WHERE commit_hash = ? AND branch = ? AND platform = ? AND architecture = ?
+            """,
+            (commit_hash, branch, platform, architecture),
+        )
+        existing = cursor.fetchone()
+        if existing:
+            print(
+                f"Run with commit {commit_hash}, branch {branch}, platform {platform}, architecture {architecture} already exists as id {existing[0]}, skipping."
+            )
+            return existing[0]
         cursor.execute(
             """
             INSERT INTO benchmark_runs (timestamp, commit_hash, branch, platform, architecture)
@@ -196,9 +211,15 @@ class BenchmarkHistoryTracker:
         return run_id
 
     def get_benchmark_history(
-        self, benchmark_name, platform=None, architecture=None, branch=None
+        self,
+        benchmark_name,
+        platform=None,
+        architecture=None,
+        branch=None,
+        max_entries=None,
+        timestamp_max=None,
     ):
-        """Get historical data for a specific benchmark"""
+        """Get historical data for a specific benchmark. If max_entries is set, limit to that many most recent entries and if timestamp_max is set, limit to the values before that timestamp."""
         query = """
             SELECT 
                 br.timestamp, 
@@ -211,7 +232,6 @@ class BenchmarkHistoryTracker:
             WHERE res.benchmark_name = ?
         """
         params = [benchmark_name]
-        print(f"Fetching history for benchmark: {benchmark_name}")
 
         if platform:
             query += " AND br.platform = ?"
@@ -222,8 +242,15 @@ class BenchmarkHistoryTracker:
         if branch:
             query += " AND br.branch = ?"
             params.append(branch)
+        if timestamp_max:
+            query += " AND br.timestamp <= ?"
+            params.append(timestamp_max)
 
-        query += " ORDER BY br.timestamp ASC"
+        # Order by timestamp descending to get most recent entries first
+        query += " ORDER BY br.timestamp DESC"
+
+        if max_entries is not None and max_entries > 0:
+            query += f" LIMIT {int(max_entries)}"
 
         df = pd.read_sql_query(query, self.conn, params=params)
 
@@ -231,6 +258,8 @@ class BenchmarkHistoryTracker:
             df["timestamp"] = pd.to_datetime(df["timestamp"])
             df["real_time"] = pd.to_numeric(df["real_time"], errors="coerce")
             df["cpu_time"] = pd.to_numeric(df["cpu_time"], errors="coerce")
+            # Sort back in ascending order for time series display
+            df = df.sort_values("timestamp")
 
         return df
 
@@ -377,6 +406,60 @@ class BenchmarkHistoryTracker:
                             ),
                         )
                     )
+
+                    if branch is not None and branch != MAIN_BRANCH:
+                        df_historic = self.get_benchmark_history(
+                            bench_name,
+                            platform=platform,
+                            architecture=architecture,
+                            branch=MAIN_BRANCH,
+                            max_entries=10,
+                            timestamp_max=df["timestamp"].min().isoformat(),
+                        )
+                        if df_historic.empty or metric not in df_historic.columns:
+                            continue
+                        historic_data = df_historic[df_historic[metric].notna()]
+                        color = colors[i + 1 % len(colors)]
+
+                        fig.add_trace(
+                            go.Scatter(
+                                x=historic_data["timestamp"].tolist(),
+                                y=historic_data[metric].tolist(),
+                                text=historic_data["commit_hash"].tolist(),
+                                mode="lines+markers",
+                                name=bench_name + " (historical)",
+                                line=dict(color=color, width=2),
+                                marker=dict(
+                                    size=3,
+                                    color=color,
+                                    line=dict(color="white", width=1),
+                                ),
+                                hovertemplate=(
+                                    f"<b>{bench_name} (historical)</b><br>"
+                                    + "Date: %{x|%Y-%m-%d %H:%M}<br>"
+                                    + f"{metric}: %{{y:.2f}} μs<br>"
+                                    + "Commit: %{text}<br>"
+                                    + "<extra></extra>"
+                                ),
+                            )
+                        )
+
+                        fig.add_trace(
+                            go.Scatter(
+                                x=[
+                                    historic_data["timestamp"].tail(1).tolist()[0],
+                                    valid_data["timestamp"].head(1).tolist()[0],
+                                ],
+                                y=[
+                                    historic_data[metric].tail(1).tolist()[0],
+                                    valid_data[metric].head(1).tolist()[0],
+                                ],
+                                mode="lines",
+                                line=dict(color=color, width=2, dash="dash"),
+                                showlegend=False,
+                                hoverinfo="skip",
+                            )
+                        )
 
             self.plot_regression_detection(
                 bench_name,
@@ -575,13 +658,21 @@ class BenchmarkHistoryTracker:
             figures = {}
             for bench_name in benchmark_names:
                 fig = self.plot_benchmark_evolution(
-                    [bench_name], metric, platform=platform, architecture=architecture
+                    [bench_name],
+                    metric,
+                    platform=platform,
+                    architecture=architecture,
+                    branch=branch,
                 )
                 figures[bench_name] = fig
             return figures
         else:
             return self.plot_benchmark_evolution(
-                benchmark_names, metric, platform=platform, architecture=architecture
+                benchmark_names,
+                metric,
+                platform=platform,
+                architecture=architecture,
+                branch=branch,
             )
 
     def detect_all_regressions(
@@ -899,7 +990,10 @@ class BenchmarkHistoryTracker:
 
                     # Create plots
                     fig_evolution = self.plot_benchmark_evolution(
-                        [bench_name], platform=platform, architecture=architecture
+                        [bench_name],
+                        platform=platform,
+                        architecture=architecture,
+                        branch=branch,
                     )
                     # fig_regression = self.plot_regression_detection(bench_name)
 
@@ -1056,15 +1150,29 @@ if __name__ == "__main__":
     tracker = BenchmarkHistoryTracker(db_path=DATABASE_PATH)
 
     if args.add_dir:
-        all_files = os.listdir(args.add_dir[0])
-        dirname = os.path.basename(args.add_dir[0])
+        # get all files recursively in the directory
+        all_files = []
+        for root, dirs, files in os.walk(args.add_dir[0]):
+            for file in files:
+                all_files.append(os.path.join(root, file))
         for filename in all_files:
-            if filename.endswith(".json") and len(filename) == 7 + 5:
-                commit_hash = filename.split(".")[0]
+            if filename.endswith(".json"):
+                # first part of the path is the platform, then architecture, then branch is the remainder.
+                # the filename is the commit hash
+                file_rel_path = os.path.relpath(filename, args.add_dir[0])
+                platform = file_rel_path.split(os.sep)[0]
+                architecture = file_rel_path.split(os.sep)[1]
+                branch = "/".join(file_rel_path.split(os.sep)[2:-1])
+                commit_hash = os.path.splitext(os.path.basename(filename))[0]
+                print(
+                    f"Adding benchmark run from file: {filename} (commit: '{commit_hash}', branch: '{branch}', platform: '{platform}', architecture: '{architecture}')"
+                )
                 tracker.add_benchmark_run(
-                    os.path.join(args.add_dir[0], filename),
+                    json_file=filename,
                     commit_hash=commit_hash,
-                    branch=dirname,
+                    branch=branch,
+                    platform=platform,
+                    architecture=architecture,
                 )
 
     if args.add:
