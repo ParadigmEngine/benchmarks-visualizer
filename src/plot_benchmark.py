@@ -41,9 +41,8 @@ def calculate_threshold_value(
 class BenchmarkHistoryTracker:
     def __init__(self, db_path="benchmark_history.db", immutable=False):
         self.conn = sqlite3.connect(
-            "file:" + db_path + ("?mode=ro" if immutable else ""),
+            db_path,
             check_same_thread=not immutable,
-            uri=True,
         )
         self._create_tables()
 
