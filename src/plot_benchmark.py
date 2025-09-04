@@ -195,7 +195,9 @@ class BenchmarkHistoryTracker:
         )
         return run_id
 
-    def get_benchmark_history(self, benchmark_name, platform=None, architecture=None):
+    def get_benchmark_history(
+        self, benchmark_name, platform=None, architecture=None, branch=None
+    ):
         """Get historical data for a specific benchmark"""
         query = """
             SELECT 
@@ -209,6 +211,7 @@ class BenchmarkHistoryTracker:
             WHERE res.benchmark_name = ?
         """
         params = [benchmark_name]
+        print(f"Fetching history for benchmark: {benchmark_name}")
 
         if platform:
             query += " AND br.platform = ?"
@@ -216,6 +219,9 @@ class BenchmarkHistoryTracker:
         if architecture:
             query += " AND br.architecture = ?"
             params.append(architecture)
+        if branch:
+            query += " AND br.branch = ?"
+            params.append(branch)
 
         query += " ORDER BY br.timestamp ASC"
 
@@ -342,7 +348,9 @@ class BenchmarkHistoryTracker:
         ]
 
         for i, bench_name in enumerate(benchmark_names):
-            df = self.get_benchmark_history(bench_name)
+            df = self.get_benchmark_history(
+                bench_name, platform=platform, architecture=architecture, branch=branch
+            )
 
             if not df.empty and metric in df.columns:
                 valid_data = df[df[metric].notna()]
@@ -370,7 +378,15 @@ class BenchmarkHistoryTracker:
                         )
                     )
 
-            self.plot_regression_detection(bench_name, threshold_range, metric, fig)
+            self.plot_regression_detection(
+                bench_name,
+                threshold_range,
+                metric,
+                fig,
+                branch=branch,
+                platform=platform,
+                architecture=architecture,
+            )
 
         fig.update_layout(
             title=None,  # Remove title as we have it in the wrapper
@@ -423,10 +439,11 @@ class BenchmarkHistoryTracker:
         figure=None,
         platform=None,
         architecture=None,
+        branch=None,
     ):
         """Plot with regression detection highlighting"""
         df = self.get_benchmark_history(
-            benchmark_name, platform=platform, architecture=architecture
+            benchmark_name, platform=platform, architecture=architecture, branch=branch
         )
 
         if df.empty:
@@ -583,7 +600,7 @@ class BenchmarkHistoryTracker:
 
         for bench_name in benchmark_names:
             df = self.get_benchmark_history(
-                bench_name, platform=platform, architecture=architecture
+                bench_name, platform=platform, architecture=architecture, branch=branch
             )
             if len(df) > 1:
                 df["pct_change"] = df[metric].pct_change() * 100
@@ -603,6 +620,7 @@ class BenchmarkHistoryTracker:
                             metric,
                             platform=platform,
                             architecture=architecture,
+                            branch=branch,
                         ),
                     }
 
@@ -731,7 +749,10 @@ class BenchmarkHistoryTracker:
 
             for bench_name in benchmarks:
                 df = self.get_benchmark_history(
-                    bench_name, platform=platform, architecture=architecture
+                    bench_name,
+                    platform=platform,
+                    architecture=architecture,
+                    branch=branch,
                 )
                 if not df.empty:
                     latest = df.iloc[-1][metric]
@@ -847,7 +868,10 @@ class BenchmarkHistoryTracker:
             # Add benchmark sections for this category
             for bench_name in benchmarks:
                 df = self.get_benchmark_history(
-                    bench_name, platform=platform, architecture=architecture
+                    bench_name,
+                    platform=platform,
+                    architecture=architecture,
+                    branch=branch,
                 )
 
                 if not df.empty:
