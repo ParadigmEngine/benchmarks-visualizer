@@ -39,11 +39,14 @@ def calculate_threshold_value(
 
 
 class BenchmarkHistoryTracker:
-    def __init__(self, db_path="benchmark_history.db", immutable=False):
+    def __init__(self, db_path="benchmark_history.db", multithreaded=False):
         self.conn = sqlite3.connect(
-            db_path,
-            check_same_thread=not immutable,
+            f"file:{db_path}{'?mode=ro&immutable=1' if not multithreaded else ''}",
+            uri=True,
+            check_same_thread=not multithreaded,
+            isolation_level=None if multithreaded else "DEFERRED",
         )
+        self._multithreaded = multithreaded
         self._create_tables()
 
     def _create_tables(self):
@@ -256,7 +259,6 @@ class BenchmarkHistoryTracker:
         if max_entries is not None and max_entries > 0:
             query += f" LIMIT {int(max_entries)}"
 
-        print("Executing query:", query, "with params:", params)
         df = pd.read_sql_query(query, self.conn, params=params)
 
         if not df.empty:
@@ -1287,8 +1289,6 @@ if __name__ == "__main__":
         print(tracker.get_database_entries(branch=args.list))
 
     def plot_branch(local_tracker, output_file, branch, platform, architecture):
-        if local_tracker is None:
-            local_tracker = BenchmarkHistoryTracker(db_path=DATABASE_PATH)
         local_tracker.create_combined_dashboard(
             output_file=output_file,
             branch=branch,
@@ -1299,6 +1299,9 @@ if __name__ == "__main__":
 
     if args.plot_ci:
         all_branches = tracker.get_all_branch_combinations()
+        local_tracker = BenchmarkHistoryTracker(
+            db_path=DATABASE_PATH, multithreaded=True
+        )
         with ThreadPoolExecutor() as executor:
             futures = []
             for [branch, platform, architecture] in all_branches:
@@ -1308,7 +1311,7 @@ if __name__ == "__main__":
                 futures.append(
                     executor.submit(
                         plot_branch,
-                        None,
+                        local_tracker,
                         output_file=output_file,
                         branch=branch,
                         platform=platform,
