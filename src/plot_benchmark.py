@@ -1287,6 +1287,8 @@ if __name__ == "__main__":
         print(tracker.get_database_entries(branch=args.list))
 
     def plot_branch(local_tracker, output_file, branch, platform, architecture):
+        if local_tracker is None:
+            local_tracker = BenchmarkHistoryTracker(db_path=DATABASE_PATH)
         local_tracker.create_combined_dashboard(
             output_file=output_file,
             branch=branch,
@@ -1297,7 +1299,6 @@ if __name__ == "__main__":
 
     if args.plot_ci:
         all_branches = tracker.get_all_branch_combinations()
-        local_tracker = BenchmarkHistoryTracker(db_path=DATABASE_PATH, immutable=True)
         with ThreadPoolExecutor() as executor:
             futures = []
             for [branch, platform, architecture] in all_branches:
@@ -1307,7 +1308,7 @@ if __name__ == "__main__":
                 futures.append(
                     executor.submit(
                         plot_branch,
-                        local_tracker,
+                        None,
                         output_file=output_file,
                         branch=branch,
                         platform=platform,
