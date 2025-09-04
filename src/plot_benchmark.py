@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import re
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, os.pardir))
@@ -38,8 +39,12 @@ def calculate_threshold_value(
 
 
 class BenchmarkHistoryTracker:
-    def __init__(self, db_path="benchmark_history.db"):
-        self.conn = sqlite3.connect(db_path)
+    def __init__(self, db_path="benchmark_history.db", immutable=False):
+        self.conn = sqlite3.connect(
+            "file:" + db_path + ("?mode=ro" if immutable else ""),
+            check_same_thread=not immutable,
+            uri=True,
+        )
         self._create_tables()
 
     def _create_tables(self):
@@ -352,6 +357,7 @@ class BenchmarkHistoryTracker:
         branch=None,
         platform=None,
         architecture=None,
+        with_regression_detection=True,
     ):
         """Create evolution plot for specified benchmarks"""
         if benchmark_names is None:
@@ -460,16 +466,16 @@ class BenchmarkHistoryTracker:
                                 hoverinfo="skip",
                             )
                         )
-
-            self.plot_regression_detection(
-                bench_name,
-                threshold_range,
-                metric,
-                fig,
-                branch=branch,
-                platform=platform,
-                architecture=architecture,
-            )
+                        if with_regression_detection:
+                            valid_data = pd.concat([historic_data, valid_data])
+            if with_regression_detection:
+                self.plot_regression_detection_df(
+                    bench_name,
+                    threshold_range,
+                    metric,
+                    fig,
+                    dataframe=valid_data,
+                )
 
         fig.update_layout(
             title=None,  # Remove title as we have it in the wrapper
@@ -511,6 +517,90 @@ class BenchmarkHistoryTracker:
                 font=dict(color="#94a3b8", size=10),
             ),
         )
+
+        return fig
+
+    def plot_regression_detection_df(
+        self,
+        benchmark_name,
+        threshold_range={"min": 10, "min_time": 100, "max": 100, "max_time": 1000},
+        metric="cpu_time",
+        figure=None,
+        dataframe=None,
+    ):
+        """Plot with regression detection highlighting from a provided dataframe"""
+        if dataframe is None:
+            return go.Figure().add_annotation(text="No data available", showarrow=False)
+
+        df = dataframe[dataframe[metric].notna()].copy()
+
+        if len(df) < 2:
+            return go.Figure().add_annotation(
+                text="Insufficient data for regression analysis", showarrow=False
+            )
+
+        df["rolling_avg"] = (
+            df[metric].rolling(window=min(5, len(df)), min_periods=1).mean()
+        )
+        df["pct_change"] = df[metric].pct_change() * 100
+
+        fig = figure or go.Figure()
+
+        if not figure:
+            fig.add_trace(
+                go.Scatter(
+                    x=df["timestamp"].tolist(),
+                    y=df[metric].tolist(),
+                    mode="lines+markers",
+                    name="Real Time",
+                    line=dict(color="#4ade80", width=4),
+                    hovertemplate="Date: %{x|%Y-%m-%d %H:%M}<br>Time: %{y:.2f} μs<extra></extra>",
+                )
+            )
+
+        fig.add_trace(
+            go.Scatter(
+                x=df["timestamp"].tolist(),
+                y=df["rolling_avg"].tolist(),
+                mode="lines",
+                name="Rolling Average",
+                line=dict(color="gray", dash="dash", width=2),
+                hovertemplate=(
+                    "Date: %{x|%Y-%m-%d %H:%M}<br>Avg: %{y:.2f} μs<extra></extra>"
+                    if not figure
+                    else "Avg: %{y:.2f} μs<extra></extra>"
+                ),
+            )
+        )
+
+        avg = df[metric].mean()
+        threshold = calculate_threshold_value(avg, threshold_range)
+
+        regressions = df[df["pct_change"] > threshold]
+        if not regressions.empty:
+            fig.add_trace(
+                go.Scatter(
+                    x=regressions["timestamp"].tolist(),
+                    y=regressions[metric].tolist(),
+                    mode="markers",
+                    name=f"Regression Warning",
+                    marker=dict(color="red", size=14, symbol="circle-dot"),
+                    hovertemplate=(
+                        f">{threshold}%<br>Date: %{{x|%Y-%m-%d %H:%M}}<br>Time: %{{y:.2f}} μs<extra></extra>"
+                        if not figure
+                        else f">{threshold}%"
+                    ),
+                )
+            )
+
+        if not figure:
+            fig.update_layout(
+                title=f"Performance: {benchmark_name}",
+                xaxis_title="Date",
+                yaxis_title="Time (μs)",
+                hovermode="x unified",
+                height=500,
+            )
 
         return fig
 
@@ -994,6 +1084,9 @@ class BenchmarkHistoryTracker:
                         platform=platform,
                         architecture=architecture,
                         branch=branch,
+                        metric=metric,
+                        threshold_range=threshold_range,
+                        with_regression_detection=True,
                     )
                     # fig_regression = self.plot_regression_detection(bench_name)
 
@@ -1091,8 +1184,6 @@ class BenchmarkHistoryTracker:
 
 # Example usage
 if __name__ == "__main__":
-    import sys
-
     DATABASE_PATH = "database.db"
     OUTPUT_DIR = ""
     DATA_DIR = ""
@@ -1103,6 +1194,7 @@ if __name__ == "__main__":
             DATABASE_PATH = settings.get("database", "")
             OUTPUT_DIR = settings.get("output", "")
             DATA_DIR = settings.get("data", "")
+            MAIN_BRANCH = settings.get("main-branch", "develop")
 
     parser = argparse.ArgumentParser(description="Benchmark History Tracker")
     group = parser.add_mutually_exclusive_group(required=True)
@@ -1194,21 +1286,21 @@ if __name__ == "__main__":
         print("Listing database entries:")
         print(tracker.get_database_entries(branch=args.list))
 
-    def plot_branch(output_file, branch, platform, architecture):
-        tracker.plot_all_benchmarks_evolution(
+    def plot_branch(local_tracker, output_file, branch, platform, architecture):
+        local_tracker.plot_all_benchmarks_evolution(
             metric="cpu_time",
             separate_plots=True,
             branch=branch,
             platform=platform,
             architecture=architecture,
         )
-        tracker.detect_all_regressions(
+        local_tracker.detect_all_regressions(
             metric="cpu_time",
             branch=branch,
             platform=platform,
             architecture=architecture,
         )
-        tracker.create_combined_dashboard(
+        local_tracker.create_combined_dashboard(
             output_file=output_file,
             branch=branch,
             metric="cpu_time",
@@ -1218,19 +1310,32 @@ if __name__ == "__main__":
 
     if args.plot_ci:
         all_branches = tracker.get_all_branch_combinations()
-        for [branch, platform, architecture] in all_branches:
-            output_file = os.path.join(
-                OUTPUT_DIR, platform, architecture, branch, "index.html"
-            )
-            plot_branch(
-                output_file=output_file,
-                branch=branch,
-                platform=platform,
-                architecture=architecture,
-            )
+        local_tracker = BenchmarkHistoryTracker(db_path=DATABASE_PATH, immutable=True)
+        with ThreadPoolExecutor() as executor:
+            futures = []
+            for [branch, platform, architecture] in all_branches:
+                output_file = os.path.join(
+                    OUTPUT_DIR, platform, architecture, branch, "index.html"
+                )
+                futures.append(
+                    executor.submit(
+                        plot_branch,
+                        local_tracker,
+                        output_file=output_file,
+                        branch=branch,
+                        platform=platform,
+                        architecture=architecture,
+                    )
+                )
+
+            # Wait for all tasks to complete
+            for future in futures:
+                future.result()
+        tracker.cache_clear()
 
     if args.plot:
         plot_branch(
+            local_tracker=tracker,
             output_file=args.plot[0],
             branch=args.plot[1],
             platform=args.plot[2],
