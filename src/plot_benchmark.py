@@ -256,6 +256,7 @@ class BenchmarkHistoryTracker:
         if max_entries is not None and max_entries > 0:
             query += f" LIMIT {int(max_entries)}"
 
+        print("Executing query:", query, "with params:", params)
         df = pd.read_sql_query(query, self.conn, params=params)
 
         if not df.empty:
