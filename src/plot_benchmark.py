@@ -468,14 +468,14 @@ class BenchmarkHistoryTracker:
                         )
                         if with_regression_detection:
                             valid_data = pd.concat([historic_data, valid_data])
-            if with_regression_detection:
-                self.plot_regression_detection_df(
-                    bench_name,
-                    threshold_range,
-                    metric,
-                    fig,
-                    dataframe=valid_data,
-                )
+                if with_regression_detection:
+                    self.plot_regression_detection_df(
+                        bench_name,
+                        threshold_range,
+                        metric,
+                        fig,
+                        dataframe=valid_data,
+                    )
 
         fig.update_layout(
             title=None,  # Remove title as we have it in the wrapper
@@ -1331,7 +1331,6 @@ if __name__ == "__main__":
             # Wait for all tasks to complete
             for future in futures:
                 future.result()
-        tracker.cache_clear()
 
     if args.plot:
         plot_branch(
