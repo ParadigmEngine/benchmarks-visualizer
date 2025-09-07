@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import re
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT_DIR = os.path.abspath(os.path.join(CURRENT_DIR, os.pardir))
@@ -39,14 +38,8 @@ def calculate_threshold_value(
 
 
 class BenchmarkHistoryTracker:
-    def __init__(self, db_path="benchmark_history.db", multithreaded=False):
-        self.conn = sqlite3.connect(
-            f"file:{db_path}{'?mode=ro&immutable=1' if not multithreaded else ''}",
-            uri=True,
-            check_same_thread=not multithreaded,
-            isolation_level=None if multithreaded else "DEFERRED",
-        )
-        self._multithreaded = multithreaded
+    def __init__(self, db_path="benchmark_history.db"):
+        self.conn = sqlite3.connect(db_path)
         self._create_tables()
 
     def _create_tables(self):
@@ -1288,8 +1281,8 @@ if __name__ == "__main__":
         print("Listing database entries:")
         print(tracker.get_database_entries(branch=args.list))
 
-    def plot_branch(local_tracker, output_file, branch, platform, architecture):
-        local_tracker.create_combined_dashboard(
+    def plot_branch(output_file, branch, platform, architecture):
+        tracker.create_combined_dashboard(
             output_file=output_file,
             branch=branch,
             metric="cpu_time",
@@ -1299,33 +1292,19 @@ if __name__ == "__main__":
 
     if args.plot_ci:
         all_branches = tracker.get_all_branch_combinations()
-        local_tracker = BenchmarkHistoryTracker(
-            db_path=DATABASE_PATH, multithreaded=True
-        )
-        with ThreadPoolExecutor() as executor:
-            futures = []
-            for [branch, platform, architecture] in all_branches:
-                output_file = os.path.join(
-                    OUTPUT_DIR, platform, architecture, branch, "index.html"
-                )
-                futures.append(
-                    executor.submit(
-                        plot_branch,
-                        local_tracker,
-                        output_file=output_file,
-                        branch=branch,
-                        platform=platform,
-                        architecture=architecture,
-                    )
-                )
-
-            # Wait for all tasks to complete
-            for future in futures:
-                future.result()
+        for [branch, platform, architecture] in all_branches:
+            output_file = os.path.join(
+                OUTPUT_DIR, platform, architecture, branch, "index.html"
+            )
+            plot_branch(
+                output_file=output_file,
+                branch=branch,
+                platform=platform,
+                architecture=architecture,
+            )
 
     if args.plot:
         plot_branch(
-            local_tracker=tracker,
             output_file=args.plot[0],
             branch=args.plot[1],
             platform=args.plot[2],
