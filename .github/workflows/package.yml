@@ -44,6 +44,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v3
+        with:
+            fetch-depth: 0 # needed as there might be new commits coming in from elsewhere
       - uses: actions/download-artifact@v5
         with:
             github-token: ${{ secrets.PARADIGM_ENGINE_PAT }}   # actions:read on the source repo
@@ -72,6 +74,7 @@ jobs:
           git add ./data/${{ github.event.inputs.platform }}/${{ github.event.inputs.architecture }}/${{ github.event.inputs.branch }}/${{ github.event.inputs.commit }}.json
           git add ./data/database.db
           git commit -m "Added ${{ github.event.inputs.branch }} - ${{ github.event.inputs.commit }} to the data"
+          git pull --rebase origin main
           git push
       - uses: actions/github-script@v7
         with:
